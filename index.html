@@ -339,11 +339,18 @@
       gap: 6px;
     }
 
-    #output::-webkit-scrollbar { width: 6px; }
-    #output::-webkit-scrollbar-track { background: transparent; }
+    #output::-webkit-scrollbar { width: 8px; }
+    #output::-webkit-scrollbar-track {
+      background: var(--bg-badge);
+      border-radius: 4px;
+      margin: 4px 0;
+    }
     #output::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 3px;
+      background: var(--text-muted);
+      border-radius: 4px;
+    }
+    #output::-webkit-scrollbar-thumb:hover {
+      background: var(--text-secondary);
     }
 
     /* ─────────────────────────────────────────────
@@ -388,7 +395,7 @@
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
       background: var(--bg-line);
-      overflow: hidden;
+      overflow: visible;
       box-shadow: var(--shadow-sm);
       transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
     }
@@ -548,40 +555,48 @@
     ───────────────────────────────────────────── */
     .json-body {
       overflow: hidden;
-      max-height: 0;
-      transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-                  opacity 0.2s ease,
-                  padding 0.2s ease;
+      height: 0;
       opacity: 0;
       padding: 0 12px;
       border-top: 0px solid var(--border);
+      transition: height 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                  opacity 0.2s ease,
+                  padding 0.2s ease;
     }
 
     .json-line.expanded .json-body {
-      max-height: 2000px;
+      /* height is set dynamically in JS to scrollHeight */
       opacity: 1;
       padding: 10px 12px 12px;
       border-top-width: 1px;
+      overflow-x: auto;
     }
 
     .json-pre {
       font-family: var(--font-mono);
       font-size: 12px;
       line-height: 1.75;
-      white-space: pre-wrap;
-      word-break: break-all;
+      white-space: pre;          /* no wrapping — let content overflow */
+      word-break: normal;
       background: var(--bg-textarea);
       border-radius: var(--radius-sm);
       padding: 12px 14px;
       border: 1px solid var(--border);
       overflow-x: auto;
+      min-width: 0;
     }
 
-    .json-pre::-webkit-scrollbar { height: 4px; }
-    .json-pre::-webkit-scrollbar-track { background: transparent; }
+    .json-pre::-webkit-scrollbar { height: 6px; }
+    .json-pre::-webkit-scrollbar-track {
+      background: var(--bg-badge);
+      border-radius: 3px;
+    }
     .json-pre::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 2px;
+      background: var(--text-muted);
+      border-radius: 3px;
+    }
+    .json-pre::-webkit-scrollbar-thumb:hover {
+      background: var(--text-secondary);
     }
 
     /* Error message block */
@@ -1021,14 +1036,53 @@ Each line is a JSON object:
             .replace(/>/g, '&gt;');
         }
 
-        /** Toggle a single line's expand/collapse state */
+        /**
+         * Toggle a single line's expand/collapse state.
+         * Uses real scrollHeight so content is never clipped by an
+         * arbitrary max-height cap, no matter how large the JSON is.
+         */
         function toggleLine(card, toggleBtn, jsonBody) {
           const expanding = !card.classList.contains('expanded');
-          card.classList.toggle('expanded', expanding);
-          toggleBtn.textContent     = expanding ? '−' : '+';
+
+          if (expanding) {
+            // 1. Add class so CSS padding/border-top kick in
+            card.classList.add('expanded');
+            // 2. Measure true content height
+            jsonBody.style.height = 'auto';
+            const fullH = jsonBody.scrollHeight;
+            // 3. Snap back to 0 so the transition animates from 0
+            jsonBody.style.height = '0px';
+            // 4. Force reflow, then set target height
+            jsonBody.getBoundingClientRect();
+            jsonBody.style.height = fullH + 'px';
+            // 5. After transition ends, switch to 'auto' so resizing
+            //    the window never clips the content
+            jsonBody.addEventListener('transitionend', function onEnd() {
+              if (card.classList.contains('expanded')) {
+                jsonBody.style.height = 'auto';
+              }
+              jsonBody.removeEventListener('transitionend', onEnd);
+            }, { once: true });
+          } else {
+            // Collapsing: pin current height first, then animate to 0
+            jsonBody.style.height = jsonBody.scrollHeight + 'px';
+            jsonBody.getBoundingClientRect();
+            jsonBody.style.height = '0px';
+            card.classList.remove('expanded');
+          }
+
+          toggleBtn.textContent = expanding ? '−' : '+';
           toggleBtn.setAttribute('aria-expanded', expanding);
           toggleBtn.setAttribute('aria-label', `${expanding ? 'Collapse' : 'Expand'} line ${card.dataset.line}`);
           jsonBody.setAttribute('aria-hidden', !expanding);
+        }
+
+        /**
+         * Apply correct height to a json-body already in expanded state
+         * (restored after a re-render). Called after element is in the DOM.
+         */
+        function applyExpandedHeight(jsonBody) {
+          jsonBody.style.height = 'auto';
         }
 
         /** Copy text to clipboard; briefly show a check icon */
@@ -1084,6 +1138,13 @@ Each line is a JSON object:
           }
 
           outputEl.replaceChildren(fragment);
+
+          // For any lines pre-rendered as expanded, set height=auto now that
+          // they are in the DOM — this ensures full content is always visible.
+          const expandedBodies = outputEl.querySelectorAll('.json-line.expanded .json-body');
+          for (const body of expandedBodies) {
+            body.style.height = 'auto';
+          }
 
           // Update stat
           const parts = [`${validCount} valid`];
